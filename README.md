@@ -1,9 +1,9 @@
 # Differential Gaussian Rasterization
 
-**NOTE**: this is a modified version to support depth & alpha rendering (both forward and backward) from the [original repository](https://github.com/graphdeco-inria/diff-gaussian-rasterization). 
+**NOTE**: this is a modified version to support nearest-depth rendering (both forward and backward) from the [repository](https://github.com/ashawkey/diff-gaussian-rasterization). And that repository is a modified version to support depth & alpha rendering (both forward and backward) from the [original repository](https://github.com/graphdeco-inria/diff-gaussian-rasterization). 
 
 ```python
-rendered_image, radii, rendered_depth, rendered_alpha = rasterizer(
+rendered_image, radii, blending_depth, nearest_depth, rendered_alpha = rasterizer(
     means3D=means3D,
     means2D=means2D,
     shs=shs,
