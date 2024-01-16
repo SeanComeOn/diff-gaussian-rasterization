@@ -47,6 +47,7 @@ namespace CudaRasterizer
 	{
 		uint2* ranges;
 		uint32_t* n_contrib;
+		uint32_t* near_gaussian_idx;
 
 		static ImageState fromChunk(char*& chunk, size_t N);
 	};

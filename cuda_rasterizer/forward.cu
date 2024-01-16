@@ -270,9 +270,11 @@ renderCUDA(
 	const float4* __restrict__ conic_opacity,
 	float* __restrict__ out_alpha,
 	uint32_t* __restrict__ n_contrib,
+	uint32_t* __restrict__ nearest_gaussian,
 	const float* __restrict__ bg_color,
 	float* __restrict__ out_color,
-	float* __restrict__ out_depth)
+	float* __restrict__ out_blending_depth,
+	float* __restrict__ out_near_depth)
 {
 	// Identify current tile and associated min/max pixel range.
 	auto block = cg::this_thread_block();
@@ -287,6 +289,9 @@ renderCUDA(
 	bool inside = pix.x < W&& pix.y < H;
 	// Done threads can help with fetching, but don't rasterize
 	bool done = !inside;
+
+	bool near_depth_gen_done = false;
+	uint32_t near_depth_gaussian_idx = 0xffffffff;
 
 	// Load start/end range of IDs to process in bit sorted list.
 	uint2 range = ranges[block.group_index().y * horizontal_blocks + block.group_index().x];
@@ -304,7 +309,8 @@ renderCUDA(
 	uint32_t last_contributor = 0;
 	float C[CHANNELS] = { 0 };
 	float weight = 0;
-	float D = 0;
+	float blending_D = 0;
+	float near_D = 0;
 
 	// Iterate over batches until all done or range is complete
 	for (int i = 0; i < rounds; i++, toDo -= BLOCK_SIZE)
@@ -326,6 +332,34 @@ renderCUDA(
 		block.sync();
 
 		// Iterate over current batch
+		for (int j = 0; !near_depth_gen_done && j < min(BLOCK_SIZE, toDo); j++)
+		{
+
+			// Resample using conic matrix (cf. "Surface 
+			// Splatting" by Zwicker et al., 2001)
+			float2 xy = collected_xy[j];
+			float2 d = { xy.x - pixf.x, xy.y - pixf.y };
+			float4 con_o = collected_conic_opacity[j];
+			float power = -0.5f * (con_o.x * d.x * d.x + con_o.z * d.y * d.y) - con_o.y * d.x * d.y;
+			if (power > 0.0f)
+				continue;
+
+			// use FWHM, thus 0.5
+			if (exp(power) <= 0.5)
+				continue;
+
+			// float alpha = min(0.99f, con_o.w * exp(power));
+			near_depth_gen_done = true;
+			near_depth_gaussian_idx = collected_id[j];
+			near_D = depths[collected_id[j]];
+
+			// if(inside) {
+			// 	out_near_depth[pix_id] = depths[collected_id[j]];
+			// 	nearest_gaussian[pix_id] = collected_id[j];
+			// }
+		}
+
+		// Iterate over current batch
 		for (int j = 0; !done && j < min(BLOCK_SIZE, toDo); j++)
 		{
 			// Keep track of current position in range
@@ -340,11 +374,22 @@ renderCUDA(
 			if (power > 0.0f)
 				continue;
 
+			// near-depth
+			// we define FWHM as the size of the gaussian
+			float exp_power = exp(power);
+			// if (exp_power > 0.5 & !near_depth_gen_done) {
+			// 	near_D = depths[collected_id[j]];
+			// 	near_depth_gen_done = true;
+			// 	near_depth_gaussian_idx = collected_id[j];
+			// 	out_near_depth[pix_id] = near_D;
+			// 	nearest_gaussian[pix_id] = near_depth_gaussian_idx;
+			// }
+
 			// Eq. (2) from 3D Gaussian splatting paper.
 			// Obtain alpha by multiplying with Gaussian opacity
 			// and its exponential falloff from mean.
 			// Avoid numerical instabilities (see paper appendix). 
-			float alpha = min(0.99f, con_o.w * exp(power));
+			float alpha = min(0.99f, con_o.w * exp_power);
 			if (alpha < 1.0f / 255.0f)
 				continue;
 			float test_T = T * (1 - alpha);
@@ -358,7 +403,7 @@ renderCUDA(
 			for (int ch = 0; ch < CHANNELS; ch++)
 				C[ch] += features[collected_id[j] * CHANNELS + ch] * alpha * T;
 			weight += alpha * T;
-			D += depths[collected_id[j]] * alpha * T;
+			blending_D += depths[collected_id[j]] * alpha * T;
 
 			T = test_T;
 
@@ -376,7 +421,10 @@ renderCUDA(
 		for (int ch = 0; ch < CHANNELS; ch++)
 			out_color[ch * H * W + pix_id] = C[ch] + T * bg_color[ch];
 		out_alpha[pix_id] = weight; //1 - T;
-		out_depth[pix_id] = D;
+		out_blending_depth[pix_id] = blending_D;
+
+		out_near_depth[pix_id] = near_D;
+		nearest_gaussian[pix_id] = near_depth_gaussian_idx;
 	}
 }
 
@@ -391,9 +439,11 @@ void FORWARD::render(
 	const float4* conic_opacity,
 	float* out_alpha,
 	uint32_t* n_contrib,
+	uint32_t* nearest_gaussian,
 	const float* bg_color,
 	float* out_color,
-	float* out_depth)
+	float* out_blending_depth,
+	float* out_near_depth)
 {
 	renderCUDA<NUM_CHANNELS> << <grid, block >> > (
 		ranges,
@@ -405,9 +455,11 @@ void FORWARD::render(
 		conic_opacity,
 		out_alpha,
 		n_contrib,
+		nearest_gaussian,
 		bg_color,
 		out_color,
-		out_depth);
+		out_blending_depth,
+		out_near_depth);
 }
 
 void FORWARD::preprocess(int P, int D, int M,

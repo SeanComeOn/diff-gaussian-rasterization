@@ -59,9 +59,11 @@ namespace FORWARD
 		const float4* conic_opacity,
 		float* out_alpha,
 		uint32_t* n_contrib,
+		uint32_t* nearest_gaussian,
 		const float* bg_color,
 		float* out_color,
-		float* out_depth);
+		float* out_blending_depth,
+		float* out_near_depth);
 }
 
 

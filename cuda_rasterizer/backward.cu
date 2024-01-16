@@ -425,8 +425,10 @@ renderCUDA(
 	const float* __restrict__ depths,
 	const float* __restrict__ alphas,
 	const uint32_t* __restrict__ n_contrib,
+	const uint32_t* __restrict__ near_gaussian_idx,
 	const float* __restrict__ dL_dpixels,
-	const float* __restrict__ dL_dpixel_depths,
+	const float* __restrict__ dL_dpixel_blending_depths,
+	const float* __restrict__ dL_dpixel_near_depths,
 	const float* __restrict__ dL_dalphas,
 	float3* __restrict__ dL_dmean2D,
 	float4* __restrict__ dL_dconic2D,
@@ -470,20 +472,43 @@ renderCUDA(
 
 	float accum_rec[C] = { 0 };
 	float dL_dpixel[C];
-	float accum_depth_rec = 0;
-	float dL_dpixel_depth;
+	float accum_blending_depth_rec = 0;
+	float dL_dpixel_blending_depth;
 	float accum_alpha_rec = 0;
 	float dL_dalpha;
+	float dL_dpixel_near_depth;
+	uint32_t gas_idx;
 	if (inside) {
 		for (int i = 0; i < C; i++)
 			dL_dpixel[i] = dL_dpixels[i * H * W + pix_id];
-		dL_dpixel_depth = dL_dpixel_depths[pix_id];
+		dL_dpixel_blending_depth = dL_dpixel_blending_depths[pix_id];
 		dL_dalpha = dL_dalphas[pix_id];
+		dL_dpixel_near_depth = dL_dpixel_near_depths[pix_id];
+		gas_idx = near_gaussian_idx[pix_id];
+		// printf("pix id: %d\n", pix_id);
+		// printf("the idx: %d\n", the_idx);
+		
+		if(gas_idx != 0xffffffff){
+			atomicAdd(&(dL_ddepths[gas_idx]), dL_dpixel_near_depth);
+			// assert(gas_idx < 1136562);
+			// if(gas_idx >= 1136562) {
+			// 	printf("the gas_idx: %x\n", gas_idx);
+			// 	assert(0);
+			// }
+			// dL_ddepths[gas_idx] += dL_dpixel_near_depth;
+			// if(gas_idx)
+			// printf("%d\n", gas_idx);
+		// 	// atomicAdd(&(dL_ddepths[the_idx]), 1);
+			
+		// 	// printf("the idx: %d\n", the_idx);
+			
+		}
+
 	}
 
 	float last_alpha = 0;
 	float last_color[C] = { 0 };
-	float last_depth = 0;
+	float last_blending_depth = 0;
 
 	// Gradient of pixel coordinate w.r.t. normalized 
 	// screen-space viewport corrdinates (-1 to 1)
@@ -533,7 +558,7 @@ renderCUDA(
 
 			T = T / (1.f - alpha);
 			const float dchannel_dcolor = alpha * T;
-			const float dpixel_depth_ddepth = alpha * T;
+			const float dpixel_blending_depth_ddepth = alpha * T;
 
 			// Propagate gradients to per-Gaussian colors and keep
 			// gradients w.r.t. alpha (blending factor for a Gaussian/pixel
@@ -557,10 +582,10 @@ renderCUDA(
 			
 			// Propagate gradients from pixel depth to opacity
 			const float c_d = collected_depths[j];
-			accum_depth_rec = last_alpha * last_depth + (1.f - last_alpha) * accum_depth_rec;
-			last_depth = c_d;
-			dL_dopa += (c_d - accum_depth_rec) * dL_dpixel_depth;
-			atomicAdd(&(dL_ddepths[global_id]), dpixel_depth_ddepth * dL_dpixel_depth);
+			accum_blending_depth_rec = last_alpha * last_blending_depth + (1.f - last_alpha) * accum_blending_depth_rec;
+			last_blending_depth = c_d;
+			dL_dopa += (c_d - accum_blending_depth_rec) * dL_dpixel_blending_depth;
+			atomicAdd(&(dL_ddepths[global_id]), dpixel_blending_depth_ddepth * dL_dpixel_blending_depth);
 
 			// Propagate gradients from pixel alpha (weights_sum) to opacity
 			accum_alpha_rec = last_alpha + (1.f - last_alpha) * accum_alpha_rec;
@@ -680,8 +705,10 @@ void BACKWARD::render(
 	const float* depths,
 	const float* alphas,
 	const uint32_t* n_contrib,
+	const uint32_t* near_gaussian_idx,
 	const float* dL_dpixels,
-	const float* dL_dpixel_depths,
+	const float* dL_dpixel_blending_depths,
+	const float* dL_dpixel_near_depths,
 	const float* dL_dalphas,
 	float3* dL_dmean2D,
 	float4* dL_dconic2D,
@@ -700,8 +727,10 @@ void BACKWARD::render(
 		depths,
 		alphas,
 		n_contrib,
+		near_gaussian_idx,
 		dL_dpixels,
-		dL_dpixel_depths,
+		dL_dpixel_blending_depths,
+		dL_dpixel_near_depths,
 		dL_dalphas,
 		dL_dmean2D,
 		dL_dconic2D,

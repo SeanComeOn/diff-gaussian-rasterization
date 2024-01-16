@@ -174,6 +174,7 @@ CudaRasterizer::ImageState CudaRasterizer::ImageState::fromChunk(char*& chunk, s
 	ImageState img;
 	obtain(chunk, img.n_contrib, N, 128);
 	obtain(chunk, img.ranges, N, 128);
+	obtain(chunk, img.near_gaussian_idx, N, 128);
 	return img;
 }
 
@@ -215,7 +216,8 @@ int CudaRasterizer::Rasterizer::forward(
 	const float tan_fovx, float tan_fovy,
 	const bool prefiltered,
 	float* out_color,
-	float* out_depth,
+	float* out_blending_depth,
+	float* out_near_depth,
 	float* out_alpha,
 	int* radii,
 	bool debug)
@@ -331,9 +333,11 @@ int CudaRasterizer::Rasterizer::forward(
 		geomState.conic_opacity,
 		out_alpha,
 		imgState.n_contrib,
+		imgState.near_gaussian_idx,
 		background,
 		out_color,
-		out_depth), debug);
+		out_blending_depth,
+		out_near_depth), debug);
 
 	return num_rendered;
 }
@@ -361,7 +365,8 @@ void CudaRasterizer::Rasterizer::backward(
 	char* binning_buffer,
 	char* img_buffer,
 	const float* dL_dpix,
-	const float* dL_dpix_depth,
+	const float* dL_dpix_blending_depth,
+	const float* dL_dpix_near_depth,
 	const float* dL_dalphas,
 	float* dL_dmean2D,
 	float* dL_dconic,
@@ -408,8 +413,10 @@ void CudaRasterizer::Rasterizer::backward(
 		depth_ptr,
 		alphas,
 		imgState.n_contrib,
+		imgState.near_gaussian_idx,
 		dL_dpix,
-		dL_dpix_depth,
+		dL_dpix_blending_depth,
+		dL_dpix_near_depth,
 		dL_dalphas,
 		(float3*)dL_dmean2D,
 		(float4*)dL_dconic,
